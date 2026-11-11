@@ -1,20 +1,17 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 /**
  * Phase 1 scaffold. The module worker is instantiated with the `new URL(...)`
  * form so Vite bundles it (see `worker: { format: 'es' }` in vite.config.js).
- * Task 3 replaces the placeholder handler in sanitizerWorker.js with the real
- * ONNX pipeline; Task 5 replaces this placeholder UI.
+ * sanitizerWorker.js is currently a stub (`self.onmessage = () => {}`); Task 3
+ * fills it with the real ONNX pipeline, and Task 5 replaces this UI.
  */
 export default function App() {
-  const workerRef = useRef(null)
-
   useEffect(() => {
     const worker = new Worker(
       new URL('./worker/sanitizerWorker.js', import.meta.url),
       { type: 'module' },
     )
-    workerRef.current = worker
     return () => worker.terminate()
   }, [])
 
