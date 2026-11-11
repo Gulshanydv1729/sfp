@@ -89,7 +89,7 @@ pasteguard/
 
 ## 4. Phase-by-Phase Execution Plan
 
-### PHASE 1 — Scaffold & Configure Vite for Web Workers
+### Task 1: Phase 1 — Scaffold & Configure Vite for Web Workers
 
 1. Scaffold, install deps (versions per §2), run `npx tailwindcss init -p`.
 2. `vite.config.js`:
@@ -108,7 +108,7 @@ pasteguard/
    `src/index.css` starts with the three `@tailwind` directives.
 5. **Gate:** `npm run build` compiles with zero errors. Also smoke-test `npm run dev` loads.
 
-### PHASE 2 — Deterministic, Entropy & Vault Engines (`src/utils/`)
+### Task 2: Phase 2 — Deterministic, Entropy & Vault Engines (`src/utils/`)
 
 **`entropy.js`**
 - `calculateShannonEntropy(str)` → `H(X) = -Σ P(xᵢ)·log₂ P(xᵢ)` bits/char.
@@ -151,7 +151,7 @@ pasteguard/
     `{ restoredText, restoredRanges }` so the UI can highlight restored segments.
 - Custom redaction: `makeCustomEntry(word)` → alias `REDACTED_N`, source `"Manual"`.
 
-### PHASE 3 — Neural NER Web Worker (`src/worker/sanitizerWorker.js`)
+### Task 3: Phase 3 — Neural NER Web Worker (`src/worker/sanitizerWorker.js`)
 
 1. `import { pipeline, env } from '@huggingface/transformers'`.
 2. Env flags:
@@ -182,7 +182,7 @@ pasteguard/
 5. Also handle `{ type: 'CANCEL' }` / re-analysis by ignoring stale responses: every ANALYZE
    carries a `requestId`, and the UI drops responses whose id ≠ latest.
 
-### PHASE 4 — Synthetic Test Presets (`src/data/samplePresets.js`)
+### Task 4: Phase 4 — Synthetic Test Presets (`src/data/samplePresets.js`)
 
 Three exports, all synthetic, each `{ id, label, buttonLabel, text }`:
 
@@ -198,7 +198,7 @@ Three exports, all synthetic, each `{ id, label, buttonLabel, text }`:
 
 Each preset must deterministically trigger ≥ 4 detections across ≥ 3 different sources.
 
-### PHASE 5 — Airlock UI (`src/App.jsx`)
+### Task 5: Phase 5 — Airlock UI (`src/App.jsx`)
 
 Dark-slate/indigo security aesthetic, 4 zones:
 
