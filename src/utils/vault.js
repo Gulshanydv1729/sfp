@@ -9,15 +9,24 @@
  * Aliases are format-preserving so code/SQL surrounding a redacted secret stays
  * syntactically valid, and deterministic: counters live at module scope, so one
  * session always yields the same alias sequence, with one shared counter per
- * alias family (all token-style secrets share `SYNTH_SECRET_TOKEN_N`).
+ * alias family (all token-style secrets share `SYNTH_SECRET_TOKEN_N`). A
+ * memoized `type|value → alias` map makes re-derivation idempotent: the same
+ * secret always maps to the same alias, even when `applySanitization` is
+ * re-run between copying the sanitized prompt and pasting the LLM reply.
  */
 
-/** Collision priority for the overlap resolver (higher wins). */
+/**
+ * Collision priority for the overlap resolver (higher wins). The brief's
+ * detector order is `Regex > Entropy > BERT-NER`; `Manual` (custom redactions)
+ * ranks *below* every detector: a one-word custom entry must never evict a
+ * larger detected secret and leak the un-redacted remainder. Custom occurrences
+ * that do not collide with any detector span are still redacted.
+ */
 const SOURCE_PRIORITY = {
-  Manual: 4,
-  Regex: 3,
-  Entropy: 2,
-  'BERT-NER': 1,
+  Regex: 4,
+  Entropy: 3,
+  'BERT-NER': 2,
+  Manual: 1,
 }
 
 const ORG_NAMES = [
@@ -50,29 +59,20 @@ const counters = {
   CUSTOM: 0,
 }
 
-function letterName(n) {
-  let out = ''
-  while (n > 0) {
-    const remainder = (n - 1) % 26
-    out = String.fromCharCode(65 + remainder) + out
-    n = Math.floor((n - 1) / 26)
-  }
-  return out
-}
-
-function greekName(n) {
-  const base = ORG_NAMES[(n - 1) % ORG_NAMES.length]
-  const cycle = Math.floor((n - 1) / ORG_NAMES.length)
-  return cycle === 0 ? base : `${base}${cycle + 1}`
-}
-
 /**
- * Deterministic, format-preserving alias for a detection type.
- *
- * @param {string} type
- * @returns {string}
+ * Memoized `type|value → alias` map. `applySanitization` is re-derived on every
+ * keystroke (Task 5 `useMemo`), so assigning a fresh counter value per call
+ * would change aliases between renders and desynchronize the vault from the
+ * text it must restore. The memo makes re-derivation idempotent: the same
+ * secret always returns the same alias, while a *new* value still advances the
+ * one shared counter for its type (keeps `SYNTH_SECRET_TOKEN_1`/`_2` distinct,
+ * for example). Keyed `${type}|${value}` so the same string under two types
+ * gets two aliases.
  */
-function assignAlias(type) {
+const aliasMemo = new Map()
+
+/** Next alias for `type`, advancing that type's shared counter. */
+function nextAlias(type) {
   switch (type) {
     case 'EMAIL':
       return `user_${++counters.EMAIL}@example-safe.org`
@@ -99,6 +99,40 @@ function assignAlias(type) {
       // AWS_KEY and any unknown type land in the generic token family.
       return `SYNTH_SECRET_TOKEN_${++counters.SECRET}`
   }
+}
+
+/**
+ * Alias for a `(type, value)` secret: memoized, so repeated derivations of the
+ * same secret are stable within the session.
+ *
+ * @param {string} type
+ * @param {string} value
+ * @returns {string}
+ */
+function aliasFor(type, value) {
+  const key = `${type}|${value}`
+  let alias = aliasMemo.get(key)
+  if (alias === undefined) {
+    alias = nextAlias(type)
+    aliasMemo.set(key, alias)
+  }
+  return alias
+}
+
+function letterName(n) {
+  let out = ''
+  while (n > 0) {
+    const remainder = (n - 1) % 26
+    out = String.fromCharCode(65 + remainder) + out
+    n = Math.floor((n - 1) / 26)
+  }
+  return out
+}
+
+function greekName(n) {
+  const base = ORG_NAMES[(n - 1) % ORG_NAMES.length]
+  const cycle = Math.floor((n - 1) / ORG_NAMES.length)
+  return cycle === 0 ? base : `${base}${cycle + 1}`
 }
 
 /** Validated `[start, end)` spans for an entity (`ranges` if present, else its own span). */
@@ -164,8 +198,9 @@ export function mergeEntities(entities) {
  * Instances are sorted by `start` asc, then span length desc, then source
  * priority, then confidence. An occupied-range walk accepts an instance only if
  * it does not collide; on collision the winner is decided by source priority
- * (`Regex > Entropy > BERT-NER`, with `Manual` above all), then higher
- * confidence, then the longer span — so a Regex span starting slightly later
+ * (`Regex > Entropy > BERT-NER`, with `Manual` below all — a one-word custom
+ * redaction never evicts a larger detected secret), then higher confidence,
+ * then the longer span — so a Regex span starting slightly later
  * can still evict an Entropy span that contains it.
  *
  * @param {Array<object>} entities
@@ -292,7 +327,7 @@ export function applySanitization(rawText, entities) {
   const vaultEntries = []
   const replacements = []
   resolved.forEach((entity, index) => {
-    const alias = entity.alias ?? assignAlias(entity.type)
+    const alias = entity.alias ?? aliasFor(entity.type, entity.value)
     vaultEntries.push({
       id: `auto-${index}`,
       original: entity.value,
@@ -403,11 +438,20 @@ export function rehydrateText(llmResponseText, vaultEntries) {
   return { restoredText: current, restoredRanges }
 }
 
+/** Monotonic id for manual entries, independent of the memoized alias. */
+let manualIdCounter = 0
+
 /**
  * Manual redaction entry for a user-chosen word. The entry carries `start: -1`;
  * `applySanitization` expands it to every (case-insensitive) occurrence of the
  * word, all sharing this one alias. `value` mirrors `original` so the object
  * can be pushed straight into the entity list consumed by `applySanitization`.
+ *
+ * The alias comes from the same memoized map as every other secret
+ * (`aliasFor('CUSTOM', word)`), so re-creating the same custom word — or
+ * re-deriving an entity list containing it — always yields the same
+ * `REDACTED_N`. Only the `id` advances on every call, so two live entries stay
+ * uniquely keyed even when they redact the same word.
  *
  * @param {string} word
  * @returns {object|null} null for blank input
@@ -416,9 +460,9 @@ export function makeCustomEntry(word) {
   const clean = typeof word === 'string' ? word.trim() : ''
   if (!clean) return null
 
-  const alias = `REDACTED_${++counters.CUSTOM}`
+  const alias = aliasFor('CUSTOM', clean)
   return {
-    id: `manual-${counters.CUSTOM}`,
+    id: `manual-${++manualIdCounter}`,
     type: 'CUSTOM',
     original: clean,
     value: clean,
