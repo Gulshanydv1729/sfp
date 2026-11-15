@@ -257,7 +257,7 @@ export default function App() {
     for (const entity of entities) {
       map.set(keyForEntity(entity), entity.enabled !== false)
       if (entity.source !== 'Manual') {
-        const key = `${entity.type}|${entity.value}`
+        const key = `${entity.type}|${entity.value}|${entity.start}`
         if (!byTypeValue.has(key)) byTypeValue.set(key, keyForEntity(entity))
       } else {
         byTypeValue.set(entity.id, entity.id)
@@ -507,6 +507,7 @@ export default function App() {
                 </div>
               ) : (
                 vaultEntries.map((entry) => {
+                  const entryStart = entry.ranges?.[0]?.[0] ?? -1
                   const key = `${entry.source}|${entry.type}|${entry.original}|${entry.ranges?.[0]?.join('-') ?? ''}`
                   const entityKey =
                     entry.source === 'Manual'
@@ -514,7 +515,7 @@ export default function App() {
                           (entity) =>
                             entity.source === 'Manual' && entity.value === entry.original,
                         )?.id
-                      : entityEnabledByKey.byTypeValue.get(`${entry.type}|${entry.original}`)
+                      : entityEnabledByKey.byTypeValue.get(`${entry.type}|${entry.original}|${entryStart}`)
                   const enabled = entityKey ? entityEnabledByKey.map.get(entityKey) !== false : true
                   return (
                     <div
